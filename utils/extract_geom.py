@@ -5,6 +5,8 @@ import numpy as np
 from bart import cfl
 import twixtools
 
+tol = 1e-6
+
 def bart_geom(geom, radial):
 
     fov = [geom.fov[0], geom.fov[0] if radial else geom.fov[1]]
@@ -13,8 +15,16 @@ def bart_geom(geom, radial):
     # geom[1][j] = fov_phase * normalize(phase enc. vector)
     # geom[2][j] = slice offset
     # basis: patient coordinates
-    geom = np.array([fov[0] * geom.prs_to_pcs()[:,1],
-                     fov[1] * geom.prs_to_pcs()[:,0],
+
+    vec_x = geom.prs_to_pcs()[:,0]
+    vec_y = geom.prs_to_pcs()[:,1]
+
+    assert(abs(np.dot(vec_x, vec_y)) < tol)
+    assert(abs(1 - np.linalg.norm(vec_x)) < tol)
+    assert(abs(1 - np.linalg.norm(vec_y)) < tol)
+
+    geom = np.array([fov[0] * geom.prs_to_pcs()[:,0],
+                     fov[1] * geom.prs_to_pcs()[:,1],
                      geom.offset])
     return geom
 
