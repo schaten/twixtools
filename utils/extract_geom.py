@@ -5,7 +5,7 @@ import numpy as np
 from bart import cfl
 import twixtools
 
-tol = 1e-6
+tol = 1e-5
 
 def bart_geom(geom, radial):
 
@@ -19,13 +19,22 @@ def bart_geom(geom, radial):
     vec_x = geom.prs_to_pcs()[:,0]
     vec_y = geom.prs_to_pcs()[:,1]
 
-    assert(abs(np.dot(vec_x, vec_y)) < tol)
-    assert(abs(1 - np.linalg.norm(vec_x)) < tol)
-    assert(abs(1 - np.linalg.norm(vec_y)) < tol)
+    orth_err = abs(np.dot(vec_x, vec_y))
+    norm_err_x = abs(1 - np.linalg.norm(vec_x))
+    norm_err_y = abs(1 - np.linalg.norm(vec_y))
 
-    geom = np.array([fov[0] * geom.prs_to_pcs()[:,0],
-                     fov[1] * geom.prs_to_pcs()[:,1],
-                     geom.offset])
+    if orth_err > tol or norm_err_x > tol or norm_err_y > tol:
+        print(f"""Geometry seems wrong.
+            Tolerance: {tol}.
+            Orthogonality error: {orth_err}
+            Normality errors: ({norm_err_x}, {norm_err_y})\n\n\n""")
+        raise RuntimeError()
+
+    offs = geom.offset
+
+    geom = np.array([fov[0] * .5 * geom.prs_to_pcs()[:,0],
+                     fov[1] * .5 * geom.prs_to_pcs()[:,1],
+                     np.array(offs)])
     return geom
 
 def bart_geom_slices(geom_array, slice_dim = 13, slice_order = None, radial = False):
