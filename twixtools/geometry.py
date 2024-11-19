@@ -11,6 +11,62 @@ pcs_transformations = {
     "FFS": [[-1, 0, 0], [0, -1, 0], [0, 0, 1]],
 }
 
+# ...redundant with quat.py maybe?
+# siemens uses scalar first convention.
+def quat_to_rotmat(scalar, i, j, k):
+    quat = np.array([scalar, i, j, k])
+    assert abs(1 - np.linalg.norm(quat)) < 1e-6
+
+    r = scalar
+
+    mat = np.array([
+            [ 1 - 2 * (j**2 + k**2), 2 * (i * j - k * r)  , 2 * (i * k + j * r)   ],
+            [ 2 * (i * j + k * r)  , 1 - 2 * (i**2 + k**2), 2 * (j * k - i * r)   ],
+            [ 2 * (i * k - j * r)  , 2 * (j * k + i * r)  , 1 - 2 * (i**2 + j**2) ]])
+    return mat
+
+def parse_slice_order(twix):
+    order = None
+    if '-' != twix['hdr']['Config']['chronSliceIndices'][0]:
+        order = []
+        for x in twix['hdr']['Config']['chronSliceIndices']:
+            if len(order) == int(twix['hdr']['MeasYaps']['sSliceArray']['lSize']):
+                break
+            if x == ' ':
+                continue
+            val = int(x)
+            order.append(val)
+    return order
+
+def prs2sct_mdb(twix, sliceno):
+    """Extract orientation matrix from mdb"""
+
+    # match chronological and normal slice order:
+    order = parse_slice_order(twix)
+    if order:
+        lookup = { x: i for i, x in enumerate(order) }
+        original_index = sliceno
+        sliceno = lookup[sliceno]
+
+    # find first mdb which belongs to the slice:
+    index = -1
+    for i,m in enumerate(twix['mdb']):
+        if m.mdh.Counter.Sli == sliceno:
+            index = i
+            break
+
+    if -1 == index:
+        print(f"No MDB found for slice with chron. index {original_index}, index {sliceno}.")
+        raise RuntimeError("Geom-MDB-Not-Found")
+
+    # calc rot matrix:
+    mat = quat_to_rotmat(*twix['mdb'][index].mdh.SliceData.Quaternion)
+    # readout and pe are flipped:
+    mat[:,0:2] *= -1
+
+    return mat
+
+
 
 class Geometry:
     """Get geometric information from twix dict
@@ -83,6 +139,22 @@ class Geometry:
                     "sNormal"
                 ].get(d, self.normal[i])
 
+        sorted_normal = np.sort(np.abs(self.normal))
+        if sorted_normal[-1] - sorted_normal[-2] < 0.01:
+            self.diagonal = True
+            if not 'mdb' in twix or 0 == len(twix['mdb']):
+                print("""
+While trying to create slice geometry, a 'diagonal' slice was found but no data has been read
+(i.e., diagonal slice AND parse_geometry AND NOT parse_data.)
+This is currently not possible; please either set parse_geometry = False or parse_data = True for this dataset.
+                    """)
+
+                raise RuntimeError("MDBs-Needed-For-Diagonal-Slices")
+            self._prs_to_pcs_mat = prs2sct_mdb(twix, n_slice)
+        else:
+            self.diagonal = False
+
+
         self.offset = [0, 0, 0]
         if "sPosition" in twix["hdr"]["MeasYaps"]["sSliceArray"]["asSlice"][n_slice]:
             for i, d in enumerate(pcs_directions):
@@ -108,6 +180,11 @@ class Geometry:
         norm = np.linalg.norm(self.normal)
         if not abs(1 - norm) < 0.001:
             raise RuntimeError(f"Normal vector is not normal: |x| = {norm}")
+
+
+        ## this does not work for slices which are normal to axes diagonal to the PCS, e.g. T > C -45.
+        if self.diagonal:
+            return self._prs_to_pcs_mat @ self.get_inplane_rotation().T
 
         # find main direction of normal vector for first part of rot matrix
         maindir = np.argmax(np.abs(self.normal))

@@ -163,6 +163,42 @@ def read_twix(infile, include_scans=None, parse_prot=True, parse_data=True, pars
         if version_is_ve:
             out[-1]['raidfile_hdr'] = raidfile_hdr['entry'][s]
 
+        # if data is requested (not only headers)
+        if parse_data:
+            pos = measOffset[s] + np.uint64(hdr_len)
+
+            if verbose:
+                print('Scan ', s)
+                progress_bar = tqdm(total=scanEnd - pos, unit='B', unit_scale=True, unit_divisor=1024)
+            while pos + 128 < scanEnd:  # fail-safe not to miss ACQEND
+                fid.seek(pos, os.SEEK_SET)
+                try:
+                    mdb = twixtools.mdb.Mdb(fid, version_is_ve)
+                except ValueError:
+                    print(f"WARNING: Mdb parsing encountered an error at file position {pos}/{scanEnd}, stopping here.")
+
+                # jump to mdh of next scan
+                pos += mdb.dma_len
+                if verbose:
+                    progress_bar.update(mdb.dma_len)
+
+                if not keep_syncdata:
+                    if mdb.is_flag_set('SYNCDATA'):
+                        continue
+
+                if mdb.is_flag_set('ACQEND'):
+                    if keep_acqend:
+                        out[-1]['mdb'].append(mdb)
+                    break
+
+                out[-1]['mdb'].append(mdb)
+
+            if parse_pmu:
+                # parse PMU data
+                pmu = PMU(out[-1]['mdb'])
+                if len(pmu.signal) > 0:
+                    out[-1]['pmu'] = pmu
+
         if parse_geometry:
             if not parse_prot:
                 print('WARNING: geometry parsing requires protocol parsing, skipping geometry parsing')
@@ -170,45 +206,7 @@ def read_twix(infile, include_scans=None, parse_prot=True, parse_data=True, pars
             else:
                 out[-1]['geometry'] = twixtools.geometry.Geometry.create_for_all_slices(out[-1])
 
-        # if data is not requested (headers only)
-        if not parse_data:
-            continue
-
-        pos = measOffset[s] + np.uint64(hdr_len)
-
-        if verbose:
-            print('Scan ', s)
-            progress_bar = tqdm(total=scanEnd - pos, unit='B', unit_scale=True, unit_divisor=1024)
-        while pos + 128 < scanEnd:  # fail-safe not to miss ACQEND
-            fid.seek(pos, os.SEEK_SET)
-            try:
-                mdb = twixtools.mdb.Mdb(fid, version_is_ve)
-            except ValueError:
-                print(f"WARNING: Mdb parsing encountered an error at file position {pos}/{scanEnd}, stopping here.")
-
-            # jump to mdh of next scan
-            pos += mdb.dma_len
-            if verbose:
-                progress_bar.update(mdb.dma_len)
-
-            if not keep_syncdata:
-                if mdb.is_flag_set('SYNCDATA'):
-                    continue
-
-            if mdb.is_flag_set('ACQEND'):
-                if keep_acqend:
-                    out[-1]['mdb'].append(mdb)
-                break
-
-            out[-1]['mdb'].append(mdb)
-
-        if parse_pmu:
-            # parse PMU data
-            pmu = PMU(out[-1]['mdb'])
-            if len(pmu.signal) > 0:
-                out[-1]['pmu'] = pmu
-
-        if verbose:
+        if verbose and parse_data:
             progress_bar.close()
 
     fid.close()
